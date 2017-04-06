@@ -1,687 +1,1114 @@
 <?php
 /**
- * @package     Joomla.Platform
- * @subpackage  Environment
+ * @package     Joomla.Libraries
+ * @subpackage  HTML
  *
- * @copyright   Copyright (C) 2005 - 2017 Open Source Matters, Inc. All rights reserved.
+ * @copyright   Copyright (C) 2005 - 2016 Open Source Matters, Inc. All rights reserved.
  * @license     GNU General Public License version 2 or later; see LICENSE
  */
 
 defined('JPATH_PLATFORM') or die;
 
+use Joomla\Utilities\ArrayHelper;
+
+jimport('joomla.environment.browser');
+jimport('joomla.filesystem.file');
+jimport('joomla.filesystem.path');
+
 /**
- * Browser class, provides capability information about the current web client.
+ * Utility class for all HTML drawing classes
  *
- * Browser identification is performed by examining the HTTP_USER_AGENT
- * environment variable provided by the web server.
- *
- * This class has many influences from the lib/Browser.php code in
- * version 3 of Horde by Chuck Hagenbuch and Jon Parise.
- *
- * @since  11.1
+ * @since  1.5
  */
-class JBrowser
+abstract class JHtml
 {
 	/**
-	 * @var    integer  Major version number
-	 * @since  12.1
-	 */
-	protected $majorVersion = 0;
-
-	/**
-	 * @var    integer  Minor version number
-	 * @since  12.1
-	 */
-	protected $minorVersion = 0;
-
-	/**
-	 * @var    string  Browser name.
-	 * @since  12.1
-	 */
-	protected $browser = '';
-
-	/**
-	 * @var    string  Full user agent string.
-	 * @since  12.1
-	 */
-	protected $agent = '';
-
-	/**
-	 * @var    string  Lower-case user agent string
-	 * @since  12.1
-	 */
-	protected $lowerAgent = '';
-
-	/**
-	 * @var    string  HTTP_ACCEPT string.
-	 * @since  12.1
-	 */
-	protected $accept = '';
-
-	/**
-	 * @var    array  Parsed HTTP_ACCEPT string
-	 * @since  12.1
-	 */
-	protected $acceptParsed = array();
-
-	/**
-	 * @var    string  Platform the browser is running on
-	 * @since  12.1
-	 */
-	protected $platform = '';
-
-	/**
-	 * @var    array  Known robots.
-	 * @since  12.1
-	 */
-	protected $robots = array(
-		/* The most common ones. */
-		'Googlebot',
-		'msnbot',
-		'Slurp',
-		'Yahoo',
-		/* The rest alphabetically. */
-		'Arachnoidea',
-		'ArchitextSpider',
-		'Ask Jeeves',
-		'B-l-i-t-z-Bot',
-		'Baiduspider',
-		'BecomeBot',
-		'cfetch',
-		'ConveraCrawler',
-		'ExtractorPro',
-		'FAST-WebCrawler',
-		'FDSE robot',
-		'fido',
-		'geckobot',
-		'Gigabot',
-		'Girafabot',
-		'grub-client',
-		'Gulliver',
-		'HTTrack',
-		'ia_archiver',
-		'InfoSeek',
-		'kinjabot',
-		'KIT-Fireball',
-		'larbin',
-		'LEIA',
-		'lmspider',
-		'Lycos_Spider',
-		'Mediapartners-Google',
-		'MuscatFerret',
-		'NaverBot',
-		'OmniExplorer_Bot',
-		'polybot',
-		'Pompos',
-		'Scooter',
-		'Teoma',
-		'TheSuBot',
-		'TurnitinBot',
-		'Ultraseek',
-		'ViolaBot',
-		'webbandit',
-		'www.almaden.ibm.com/cs/crawler',
-		'ZyBorg',
-	);
-
-	/**
-	 * @var    boolean  Is this a mobile browser?
-	 * @since  12.1
-	 */
-	protected $mobile = false;
-
-	/**
-	 * List of viewable image MIME subtypes.
-	 * This list of viewable images works for IE and Netscape/Mozilla.
+	 * Option values related to the generation of HTML output. Recognized
+	 * options are:
+	 *     fmtDepth, integer. The current indent depth.
+	 *     fmtEol, string. The end of line string, default is linefeed.
+	 *     fmtIndent, string. The string to use for indentation, default is
+	 *     tab.
 	 *
 	 * @var    array
-	 * @since  12.1
+	 * @since  1.5
 	 */
-	protected $images = array('jpeg', 'gif', 'png', 'pjpeg', 'x-png', 'bmp');
+	public static $formatOptions = array('format.depth' => 0, 'format.eol' => "\n", 'format.indent' => "\t");
 
 	/**
-	 * @var    array  JBrowser instances container.
-	 * @since  11.3
+	 * An array to hold included paths
+	 *
+	 * @var    array
+	 * @since  1.5
 	 */
-	protected static $instances = array();
+	protected static $includePaths = array();
 
 	/**
-	 * Create a browser instance (constructor).
+	 * An array to hold method references
 	 *
-	 * @param   string  $userAgent  The browser string to parse.
-	 * @param   string  $accept     The HTTP_ACCEPT settings to use.
-	 *
-	 * @since   11.1
+	 * @var    array
+	 * @since  1.6
 	 */
-	public function __construct($userAgent = null, $accept = null)
+	protected static $registry = array();
+
+	/**
+	 * Method to extract a key
+	 *
+	 * @param   string  $key  The name of helper method to load, (prefix).(class).function
+	 *                        prefix and class are optional and can be used to load custom html helpers.
+	 *
+	 * @return  array  Contains lowercase key, prefix, file, function.
+	 *
+	 * @since   1.6
+	 */
+	protected static function extract($key)
 	{
-		$this->match($userAgent, $accept);
+		$key = preg_replace('#[^A-Z0-9_\.]#i', '', $key);
+
+		// Check to see whether we need to load a helper file
+		$parts = explode('.', $key);
+
+		$prefix = (count($parts) == 3 ? array_shift($parts) : 'JHtml');
+		$file = (count($parts) == 2 ? array_shift($parts) : '');
+		$func = array_shift($parts);
+
+		return array(strtolower($prefix . '.' . $file . '.' . $func), $prefix, $file, $func);
 	}
 
 	/**
-	 * Returns the global Browser object, only creating it
-	 * if it doesn't already exist.
+	 * Class loader method
 	 *
-	 * @param   string  $userAgent  The browser string to parse.
-	 * @param   string  $accept     The HTTP_ACCEPT settings to use.
+	 * Additional arguments may be supplied and are passed to the sub-class.
+	 * Additional include paths are also able to be specified for third-party use
 	 *
-	 * @return  JBrowser  The Browser object.
+	 * @param   string  $key  The name of helper method to load, (prefix).(class).function
+	 *                        prefix and class are optional and can be used to load custom
+	 *                        html helpers.
 	 *
-	 * @since   11.1
+	 * @return  mixed  Result of JHtml::call($function, $args)
+	 *
+	 * @since   1.5
+	 * @throws  InvalidArgumentException
 	 */
-	public static function getInstance($userAgent = null, $accept = null)
+	public static function _($key)
 	{
-		$signature = serialize(array($userAgent, $accept));
+		list($key, $prefix, $file, $func) = static::extract($key);
 
-		if (empty(self::$instances[$signature]))
+		if (array_key_exists($key, static::$registry))
 		{
-			self::$instances[$signature] = new JBrowser($userAgent, $accept);
+			$function = static::$registry[$key];
+			$args = func_get_args();
+
+			// Remove function name from arguments
+			array_shift($args);
+
+			return static::call($function, $args);
 		}
 
-		return self::$instances[$signature];
-	}
+		$className = $prefix . ucfirst($file);
 
-	/**
-	 * Parses the user agent string and inititializes the object with
-	 * all the known features and quirks for the given browser.
-	 *
-	 * @param   string  $userAgent  The browser string to parse.
-	 * @param   string  $accept     The HTTP_ACCEPT settings to use.
-	 *
-	 * @return  void
-	 *
-	 * @since   11.1
-	 */
-	public function match($userAgent = null, $accept = null)
-	{
-		// Set our agent string.
-		if (is_null($userAgent))
+		if (!class_exists($className))
 		{
-			if (isset($_SERVER['HTTP_USER_AGENT']))
+			$path = JPath::find(static::$includePaths, strtolower($file) . '.php');
+
+			if ($path)
 			{
-				$this->agent = trim($_SERVER['HTTP_USER_AGENT']);
+				require_once $path;
+
+				if (!class_exists($className))
+				{
+					throw new InvalidArgumentException(sprintf('%s not found.', $className), 500);
+				}
 			}
+			else
+			{
+				throw new InvalidArgumentException(sprintf('%s %s not found.', $prefix, $file), 500);
+			}
+		}
+
+		$toCall = array($className, $func);
+
+		if (is_callable($toCall))
+		{
+			static::register($key, $toCall);
+			$args = func_get_args();
+
+			// Remove function name from arguments
+			array_shift($args);
+
+			return static::call($toCall, $args);
 		}
 		else
 		{
-			$this->agent = $userAgent;
-		}
-
-		$this->lowerAgent = strtolower($this->agent);
-
-		// Set our accept string.
-		if (is_null($accept))
-		{
-			if (isset($_SERVER['HTTP_ACCEPT']))
-			{
-				$this->accept = strtolower(trim($_SERVER['HTTP_ACCEPT']));
-			}
-		}
-		else
-		{
-			$this->accept = strtolower($accept);
-		}
-
-		if (!empty($this->agent))
-		{
-			$this->_setPlatform();
-
-			if (strpos($this->lowerAgent, 'mobileexplorer') !== false
-				|| strpos($this->lowerAgent, 'openwave') !== false
-				|| strpos($this->lowerAgent, 'opera mini') !== false
-				|| strpos($this->lowerAgent, 'opera mobi') !== false
-				|| strpos($this->lowerAgent, 'operamini') !== false)
-			{
-				$this->mobile = true;
-			}
-			elseif (preg_match('|Opera[/ ]([0-9.]+)|', $this->agent, $version))
-			{
-				$this->setBrowser('opera');
-				list ($this->majorVersion, $this->minorVersion) = explode('.', $version[1]);
-
-				/* Due to changes in Opera UA, we need to check Version/xx.yy,
-				 * but only if version is > 9.80. See: http://dev.opera.com/articles/view/opera-ua-string-changes/ */
-				if ($this->majorVersion == 9 && $this->minorVersion >= 80)
-				{
-					$this->identifyBrowserVersion();
-				}
-			}
-
-			// Opera 15+
-			elseif (preg_match('|OPR[/ ]([0-9.]+)|', $this->agent, $version))
-			{
-				$this->setBrowser('opera');
-				list ($this->majorVersion, $this->minorVersion) = explode('.', $version[1]);
-			}
-			elseif (preg_match('|Chrome[/ ]([0-9.]+)|', $this->agent, $version))
-			{
-				$this->setBrowser('chrome');
-				list ($this->majorVersion, $this->minorVersion) = explode('.', $version[1]);
-			}
-			elseif (preg_match('|CrMo[/ ]([0-9.]+)|', $this->agent, $version))
-			{
-				$this->setBrowser('chrome');
-				list ($this->majorVersion, $this->minorVersion) = explode('.', $version[1]);
-			}
-			elseif (preg_match('|CriOS[/ ]([0-9.]+)|', $this->agent, $version))
-			{
-				$this->setBrowser('chrome');
-				list ($this->majorVersion, $this->minorVersion) = explode('.', $version[1]);
-				$this->mobile = true;
-			}
-			elseif (strpos($this->lowerAgent, 'elaine/') !== false
-				|| strpos($this->lowerAgent, 'palmsource') !== false
-				|| strpos($this->lowerAgent, 'digital paths') !== false)
-			{
-				$this->setBrowser('palm');
-				$this->mobile = true;
-			}
-			elseif ((preg_match('|MSIE ([0-9.]+)|', $this->agent, $version)) || (preg_match('|Internet Explorer/([0-9.]+)|', $this->agent, $version)))
-			{
-				$this->setBrowser('msie');
-
-				if (strpos($version[1], '.') !== false)
-				{
-					list ($this->majorVersion, $this->minorVersion) = explode('.', $version[1]);
-				}
-				else
-				{
-					$this->majorVersion = $version[1];
-					$this->minorVersion = 0;
-				}
-
-				/* Some Handhelds have their screen resolution in the
-				 * user agent string, which we can use to look for
-				 * mobile agents.
-				 */
-				if (preg_match('/; (120x160|240x280|240x320|320x320)\)/', $this->agent))
-				{
-					$this->mobile = true;
-				}
-			}
-			elseif (preg_match('|amaya/([0-9.]+)|', $this->agent, $version))
-			{
-				$this->setBrowser('amaya');
-				$this->majorVersion = $version[1];
-
-				if (isset($version[2]))
-				{
-					$this->minorVersion = $version[2];
-				}
-			}
-			elseif (preg_match('|ANTFresco/([0-9]+)|', $this->agent, $version))
-			{
-				$this->setBrowser('fresco');
-			}
-			elseif (strpos($this->lowerAgent, 'avantgo') !== false)
-			{
-				$this->setBrowser('avantgo');
-				$this->mobile = true;
-			}
-			elseif (preg_match('|[Kk]onqueror/([0-9]+)|', $this->agent, $version) || preg_match('|Safari/([0-9]+)\.?([0-9]+)?|', $this->agent, $version))
-			{
-				// Konqueror and Apple's Safari both use the KHTML
-				// rendering engine.
-				$this->setBrowser('konqueror');
-				$this->majorVersion = $version[1];
-
-				if (isset($version[2]))
-				{
-					$this->minorVersion = $version[2];
-				}
-
-				if (strpos($this->agent, 'Safari') !== false && $this->majorVersion >= 60)
-				{
-					// Safari.
-					$this->setBrowser('safari');
-					$this->identifyBrowserVersion();
-				}
-			}
-			elseif (preg_match('|Mozilla/([0-9.]+)|', $this->agent, $version))
-			{
-				$this->setBrowser('mozilla');
-
-				list ($this->majorVersion, $this->minorVersion) = explode('.', $version[1]);
-			}
-			elseif (preg_match('|Lynx/([0-9]+)|', $this->agent, $version))
-			{
-				$this->setBrowser('lynx');
-			}
-			elseif (preg_match('|Links \(([0-9]+)|', $this->agent, $version))
-			{
-				$this->setBrowser('links');
-			}
-			elseif (preg_match('|HotJava/([0-9]+)|', $this->agent, $version))
-			{
-				$this->setBrowser('hotjava');
-			}
-			elseif (strpos($this->agent, 'UP/') !== false || strpos($this->agent, 'UP.B') !== false || strpos($this->agent, 'UP.L') !== false)
-			{
-				$this->setBrowser('up');
-				$this->mobile = true;
-			}
-			elseif (strpos($this->agent, 'Xiino/') !== false)
-			{
-				$this->setBrowser('xiino');
-				$this->mobile = true;
-			}
-			elseif (strpos($this->agent, 'Palmscape/') !== false)
-			{
-				$this->setBrowser('palmscape');
-				$this->mobile = true;
-			}
-			elseif (strpos($this->agent, 'Nokia') !== false)
-			{
-				$this->setBrowser('nokia');
-				$this->mobile = true;
-			}
-			elseif (strpos($this->agent, 'Ericsson') !== false)
-			{
-				$this->setBrowser('ericsson');
-				$this->mobile = true;
-			}
-			elseif (strpos($this->lowerAgent, 'wap') !== false)
-			{
-				$this->setBrowser('wap');
-				$this->mobile = true;
-			}
-			elseif (strpos($this->lowerAgent, 'docomo') !== false || strpos($this->lowerAgent, 'portalmmm') !== false)
-			{
-				$this->setBrowser('imode');
-				$this->mobile = true;
-			}
-			elseif (strpos($this->agent, 'BlackBerry') !== false)
-			{
-				$this->setBrowser('blackberry');
-				$this->mobile = true;
-			}
-			elseif (strpos($this->agent, 'MOT-') !== false)
-			{
-				$this->setBrowser('motorola');
-				$this->mobile = true;
-			}
-			elseif (strpos($this->lowerAgent, 'j-') !== false)
-			{
-				$this->setBrowser('mml');
-				$this->mobile = true;
-			}
+			throw new InvalidArgumentException(sprintf('%s::%s not found.', $className, $func), 500);
 		}
 	}
 
 	/**
-	 * Match the platform of the browser.
+	 * Registers a function to be called with a specific key
 	 *
-	 * This is a pretty simplistic implementation, but it's intended
-	 * to let us tell what line breaks to send, so it's good enough
-	 * for its purpose.
+	 * @param   string  $key       The name of the key
+	 * @param   string  $function  Function or method
 	 *
-	 * @return  void
+	 * @return  boolean  True if the function is callable
 	 *
-	 * @since   11.1
+	 * @since   1.6
 	 */
-	protected function _setPlatform()
+	public static function register($key, $function)
 	{
-		if (strpos($this->lowerAgent, 'wind') !== false)
+		list($key) = static::extract($key);
+
+		if (is_callable($function))
 		{
-			$this->platform = 'win';
-		}
-		elseif (strpos($this->lowerAgent, 'mac') !== false)
-		{
-			$this->platform = 'mac';
-		}
-		else
-		{
-			$this->platform = 'unix';
-		}
-	}
+			static::$registry[$key] = $function;
 
-	/**
-	 * Return the currently matched platform.
-	 *
-	 * @return  string  The user's platform.
-	 *
-	 * @since   11.1
-	 */
-	public function getPlatform()
-	{
-		return $this->platform;
-	}
-
-	/**
-	 * Set browser version, not by engine version
-	 * Fallback to use when no other method identify the engine version
-	 *
-	 * @return  void
-	 *
-	 * @since   11.1
-	 */
-	protected function identifyBrowserVersion()
-	{
-		if (preg_match('|Version[/ ]([0-9.]+)|', $this->agent, $version))
-		{
-			list ($this->majorVersion, $this->minorVersion) = explode('.', $version[1]);
-
-			return;
-		}
-
-		// Can't identify browser version
-		$this->majorVersion = 0;
-		$this->minorVersion = 0;
-	}
-
-	/**
-	 * Sets the current browser.
-	 *
-	 * @param   string  $browser  The browser to set as current.
-	 *
-	 * @return  void
-	 *
-	 * @since   11.1
-	 */
-	public function setBrowser($browser)
-	{
-		$this->browser = $browser;
-	}
-
-	/**
-	 * Retrieve the current browser.
-	 *
-	 * @return  string  The current browser.
-	 *
-	 * @since   11.1
-	 */
-	public function getBrowser()
-	{
-		return $this->browser;
-	}
-
-	/**
-	 * Retrieve the current browser's major version.
-	 *
-	 * @return  integer  The current browser's major version
-	 *
-	 * @since   11.1
-	 */
-	public function getMajor()
-	{
-		return $this->majorVersion;
-	}
-
-	/**
-	 * Retrieve the current browser's minor version.
-	 *
-	 * @return  integer  The current browser's minor version.
-	 *
-	 * @since   11.1
-	 */
-	public function getMinor()
-	{
-		return $this->minorVersion;
-	}
-
-	/**
-	 * Retrieve the current browser's version.
-	 *
-	 * @return  string  The current browser's version.
-	 *
-	 * @since   11.1
-	 */
-	public function getVersion()
-	{
-		return $this->majorVersion . '.' . $this->minorVersion;
-	}
-
-	/**
-	 * Return the full browser agent string.
-	 *
-	 * @return  string  The browser agent string
-	 *
-	 * @since   11.1
-	 */
-	public function getAgentString()
-	{
-		return $this->agent;
-	}
-
-	/**
-	 * Returns the server protocol in use on the current server.
-	 *
-	 * @return  string  The HTTP server protocol version.
-	 *
-	 * @since   11.1
-	 */
-	public function getHTTPProtocol()
-	{
-		if (isset($_SERVER['SERVER_PROTOCOL']))
-		{
-			if (($pos = strrpos($_SERVER['SERVER_PROTOCOL'], '/')))
-			{
-				return substr($_SERVER['SERVER_PROTOCOL'], $pos + 1);
-			}
-		}
-
-		return;
-	}
-
-	/**
-	 * Determines if a browser can display a given MIME type.
-	 *
-	 * Note that  image/jpeg and image/pjpeg *appear* to be the same
-	 * entity, but Mozilla doesn't seem to want to accept the latter.
-	 * For our purposes, we will treat them the same.
-	 *
-	 * @param   string  $mimetype  The MIME type to check.
-	 *
-	 * @return  boolean  True if the browser can display the MIME type.
-	 *
-	 * @since   11.1
-	 */
-	public function isViewable($mimetype)
-	{
-		$mimetype = strtolower($mimetype);
-		list ($type, $subtype) = explode('/', $mimetype);
-
-		if (!empty($this->accept))
-		{
-			$wildcard_match = false;
-
-			if (strpos($this->accept, $mimetype) !== false)
-			{
-				return true;
-			}
-
-			if (strpos($this->accept, '*/*') !== false)
-			{
-				$wildcard_match = true;
-
-				if ($type != 'image')
-				{
-					return true;
-				}
-			}
-
-			// Deal with Mozilla pjpeg/jpeg issue
-			if ($this->isBrowser('mozilla') && ($mimetype == 'image/pjpeg') && (strpos($this->accept, 'image/jpeg') !== false))
-			{
-				return true;
-			}
-
-			if (!$wildcard_match)
-			{
-				return false;
-			}
-		}
-
-		if ($type != 'image')
-		{
-			return false;
-		}
-
-		return in_array($subtype, $this->images);
-	}
-
-	/**
-	 * Determine if the given browser is the same as the current.
-	 *
-	 * @param   string  $browser  The browser to check.
-	 *
-	 * @return  boolean  Is the given browser the same as the current?
-	 *
-	 * @since   11.1
-	 */
-	public function isBrowser($browser)
-	{
-		return $this->browser === $browser;
-	}
-
-	/**
-	 * Determines if the browser is a robot or not.
-	 *
-	 * @return  boolean  True if browser is a known robot.
-	 *
-	 * @since   11.1
-	 */
-	public function isRobot()
-	{
-		foreach ($this->robots as $robot)
-		{
-			if (strpos($this->agent, $robot) !== false)
-			{
-				return true;
-			}
+			return true;
 		}
 
 		return false;
 	}
 
 	/**
-	 * Determines if the browser is mobile version or not.
+	 * Removes a key for a method from registry.
 	 *
-	 * @return boolean  True if browser is a known mobile version.
+	 * @param   string  $key  The name of the key
 	 *
-	 * @since   11.1
+	 * @return  boolean  True if a set key is unset
+	 *
+	 * @since   1.6
 	 */
-	public function isMobile()
+	public static function unregister($key)
 	{
-		return $this->mobile;
+		list($key) = static::extract($key);
+
+		if (isset(static::$registry[$key]))
+		{
+			unset(static::$registry[$key]);
+
+			return true;
+		}
+
+		return false;
 	}
 
 	/**
-	 * Determine if we are using a secure (SSL) connection.
+	 * Test if the key is registered.
 	 *
-	 * @return  boolean  True if using SSL, false if not.
+	 * @param   string  $key  The name of the key
 	 *
-	 * @since   11.1
-	 * @deprecated  13.3 (Platform) & 4.0 (CMS) - Use the isSSLConnection method on the application object.
+	 * @return  boolean  True if the key is registered.
+	 *
+	 * @since   1.6
 	 */
-	public function isSSLConnection()
+	public static function isRegistered($key)
 	{
-		JLog::add(
-			'JBrowser::isSSLConnection() is deprecated. Use the isSSLConnection method on the application object instead.',
-			JLog::WARNING,
-			'deprecated'
-		);
+		list($key) = static::extract($key);
 
-		return (isset($_SERVER['HTTPS']) && ($_SERVER['HTTPS'] == 'on')) || getenv('SSL_PROTOCOL_VERSION');
+		return isset(static::$registry[$key]);
+	}
+
+	/**
+	 * Function caller method
+	 *
+	 * @param   callable  $function  Function or method to call
+	 * @param   array     $args      Arguments to be passed to function
+	 *
+	 * @return  mixed   Function result or false on error.
+	 *
+	 * @see     https://secure.php.net/manual/en/function.call-user-func-array.php
+	 * @since   1.6
+	 * @throws  InvalidArgumentException
+	 */
+	protected static function call($function, $args)
+	{
+		if (!is_callable($function))
+		{
+			throw new InvalidArgumentException('Function not supported', 500);
+		}
+
+		// PHP 5.3 workaround
+		$temp = array();
+
+		foreach ($args as &$arg)
+		{
+			$temp[] = &$arg;
+		}
+
+		return call_user_func_array($function, $temp);
+	}
+
+	/**
+	 * Write a `<a>` element
+	 *
+	 * @param   string  $url      The relative URL to use for the href attribute
+	 * @param   string  $text     The target attribute to use
+	 * @param   array   $attribs  An associative array of attributes to add
+	 *
+	 * @return  string
+	 *
+	 * @since   1.5
+	 */
+	public static function link($url, $text, $attribs = null)
+	{
+		if (is_array($attribs))
+		{
+			$attribs = ArrayHelper::toString($attribs);
+		}
+
+		return '<a href="' . $url . '" ' . $attribs . '>' . $text . '</a>';
+	}
+
+	/**
+	 * Write a `<iframe>` element
+	 *
+	 * @param   string  $url       The relative URL to use for the src attribute.
+	 * @param   string  $name      The target attribute to use.
+	 * @param   array   $attribs   An associative array of attributes to add.
+	 * @param   string  $noFrames  The message to display if the iframe tag is not supported.
+	 *
+	 * @return  string
+	 *
+	 * @since   1.5
+	 */
+	public static function iframe($url, $name, $attribs = null, $noFrames = '')
+	{
+		if (is_array($attribs))
+		{
+			$attribs = ArrayHelper::toString($attribs);
+		}
+
+		return '<iframe src="' . $url . '" ' . $attribs . ' name="' . $name . '">' . $noFrames . '</iframe>';
+	}
+
+	/**
+	 * Compute the files to be included
+	 *
+	 * @param   string   $folder          folder name to search into (images, css, js, ...).
+	 * @param   string   $file            path to file.
+	 * @param   boolean  $relative        path to file is relative to /media folder  (and searches in template).
+	 * @param   boolean  $detect_browser  detect browser to include specific browser files.
+	 * @param   boolean  $detect_debug    detect debug to include compressed files if debug is on.
+	 *
+	 * @return  array    files to be included.
+	 *
+	 * @see     JBrowser
+	 * @since   1.6
+	 */
+	protected static function includeRelativeFiles($folder, $file, $relative, $detect_browser, $detect_debug)
+	{
+		// If http is present in filename
+		if (strpos($file, 'http') === 0 || strpos($file, '//') === 0)
+		{
+			$includes = array($file);
+		}
+		else
+		{
+			// Extract extension and strip the file
+			$strip = JFile::stripExt($file);
+			$ext   = JFile::getExt($file);
+
+			// Prepare array of files
+			$includes = array();
+
+			// Detect browser and compute potential files
+			if ($detect_browser)
+			{
+				$navigator = JBrowser::getInstance();
+				$browser = $navigator->getBrowser();
+				$major = $navigator->getMajor();
+				$minor = $navigator->getMinor();
+
+				// Try to include files named filename.ext, filename_browser.ext, filename_browser_major.ext, filename_browser_major_minor.ext
+				// where major and minor are the browser version names
+				$potential = array(
+					$strip,
+					$strip . '_' . $browser,
+					$strip . '_' . $browser . '_' . $major,
+					$strip . '_' . $browser . '_' . $major . '_' . $minor,
+				);
+			}
+			else
+			{
+				$potential = array($strip);
+			}
+
+			// If relative search in template directory or media directory
+			if ($relative)
+			{
+				// Get the template
+				$template = JFactory::getApplication()->getTemplate();
+
+				// For each potential files
+				foreach ($potential as $strip)
+				{
+					$files = array();
+
+					// Detect debug mode
+					if ($detect_debug && JFactory::getConfig()->get('debug'))
+					{
+						/*
+						 * Detect if we received a file in the format name.min.ext
+						 * If so, strip the .min part out, otherwise append -uncompressed
+						 */
+						if (strrpos($strip, '.min', '-4'))
+						{
+							$position = strrpos($strip, '.min', '-4');
+							$filename = str_replace('.min', '.', $strip, $position);
+							$files[]  = $filename . $ext;
+						}
+						else
+						{
+							$files[] = $strip . '-uncompressed.' . $ext;
+						}
+					}
+
+					$files[] = $strip . '.' . $ext;
+
+					/*
+					 * Loop on 1 or 2 files and break on first found.
+					 * Add the content of the MD5SUM file located in the same folder to url to ensure cache browser refresh
+					 * This MD5SUM file must represent the signature of the folder content
+					 */
+					foreach ($files as $file)
+					{
+						// If the file is in the template folder
+						$path = JPATH_THEMES . "/$template/$folder/$file";
+
+						if (file_exists($path))
+						{
+							$md5 = dirname($path) . '/MD5SUM';
+							$includes[] = JUri::base(true) . "/templates/$template/$folder/$file" .
+								(file_exists($md5) ? ('?' . file_get_contents($md5)) : '');
+
+							break;
+						}
+						else
+						{
+							// If the file contains any /: it can be in an media extension subfolder
+							if (strpos($file, '/'))
+							{
+								// Divide the file extracting the extension as the first part before /
+								list($extension, $file) = explode('/', $file, 2);
+
+								// If the file yet contains any /: it can be a plugin
+								if (strpos($file, '/'))
+								{
+									// Divide the file extracting the element as the first part before /
+									list($element, $file) = explode('/', $file, 2);
+
+									// Try to deal with plugins group in the media folder
+									$path = JPATH_ROOT . "/media/$extension/$element/$folder/$file";
+
+									if (file_exists($path))
+									{
+										$md5 = dirname($path) . '/MD5SUM';
+										$includes[] = JUri::root(true) . "/media/$extension/$element/$folder/$file" .
+											(file_exists($md5) ? ('?' . file_get_contents($md5)) : '');
+
+										break;
+									}
+
+									// Try to deal with classical file in a media subfolder called element
+									$path = JPATH_ROOT . "/media/$extension/$folder/$element/$file";
+
+									if (file_exists($path))
+									{
+										$md5 = dirname($path) . '/MD5SUM';
+										$includes[] = JUri::root(true) . "/media/$extension/$folder/$element/$file" .
+											(file_exists($md5) ? ('?' . file_get_contents($md5)) : '');
+
+										break;
+									}
+
+									// Try to deal with system files in the template folder
+									$path = JPATH_THEMES . "/$template/$folder/system/$element/$file";
+
+									if (file_exists($path))
+									{
+										$md5 = dirname($path) . '/MD5SUM';
+										$includes[] = JUri::root(true) . "/templates/$template/$folder/system/$element/$file" .
+											(file_exists($md5) ? ('?' . file_get_contents($md5)) : '');
+
+										break;
+									}
+
+									// Try to deal with system files in the media folder
+									$path = JPATH_ROOT . "/media/system/$folder/$element/$file";
+
+									if (file_exists($path))
+									{
+										$md5 = dirname($path) . '/MD5SUM';
+										$includes[] = JUri::root(true) . "/media/system/$folder/$element/$file" .
+											(file_exists($md5) ? ('?' . file_get_contents($md5)) : '');
+
+										break;
+									}
+								}
+								else
+								{
+									// Try to deals in the extension media folder
+									$path = JPATH_ROOT . "/media/$extension/$folder/$file";
+
+									if (file_exists($path))
+									{
+										$md5 = dirname($path) . '/MD5SUM';
+										$includes[] = JUri::root(true) . "/media/$extension/$folder/$file" .
+											(file_exists($md5) ? ('?' . file_get_contents($md5)) : '');
+
+										break;
+									}
+
+									// Try to deal with system files in the template folder
+									$path = JPATH_THEMES . "/$template/$folder/system/$file";
+
+									if (file_exists($path))
+									{
+										$md5 = dirname($path) . '/MD5SUM';
+										$includes[] = JUri::root(true) . "/templates/$template/$folder/system/$file" .
+											(file_exists($md5) ? ('?' . file_get_contents($md5)) : '');
+
+										break;
+									}
+
+									// Try to deal with system files in the media folder
+									$path = JPATH_ROOT . "/media/system/$folder/$file";
+
+									if (file_exists($path))
+									{
+										$md5 = dirname($path) . '/MD5SUM';
+										$includes[] = JUri::root(true) . "/media/system/$folder/$file" .
+											(file_exists($md5) ? ('?' . file_get_contents($md5)) : '');
+
+										break;
+									}
+								}
+							}
+							// Try to deal with system files in the media folder
+							else
+							{
+								$path = JPATH_ROOT . "/media/system/$folder/$file";
+
+								if (file_exists($path))
+								{
+									$md5 = dirname($path) . '/MD5SUM';
+									$includes[] = JUri::root(true) . "/media/system/$folder/$file" .
+											(file_exists($md5) ? ('?' . file_get_contents($md5)) : '');
+
+									break;
+								}
+							}
+						}
+					}
+				}
+			}
+			// If not relative and http is not present in filename
+			else
+			{
+				foreach ($potential as $strip)
+				{
+					$files = array();
+
+					// Detect debug mode
+					if ($detect_debug && JFactory::getConfig()->get('debug'))
+					{
+						/*
+						 * Detect if we received a file in the format name.min.ext
+						 * If so, strip the .min part out, otherwise append -uncompressed
+						 */
+						if (strrpos($strip, '.min', '-4'))
+						{
+							$position = strrpos($strip, '.min', '-4');
+							$filename = str_replace('.min', '.', $strip, $position);
+							$files[]  = $filename . $ext;
+						}
+						else
+						{
+							$files[] = $strip . '-uncompressed.' . $ext;
+						}
+					}
+
+					$files[] = $strip . '.' . $ext;
+
+					/*
+					 * Loop on 1 or 2 files and break on first found.
+					 * Add the content of the MD5SUM file located in the same folder to url to ensure cache browser refresh
+					 * This MD5SUM file must represent the signature of the folder content
+					 */
+					foreach ($files as $file)
+					{
+						$path = JPATH_ROOT . "/$file";
+
+						if (file_exists($path))
+						{
+							$md5 = dirname($path) . '/MD5SUM';
+							$includes[] = JUri::root(true) . "/$file" .
+								(file_exists($md5) ? ('?' . file_get_contents($md5)) : '');
+
+							break;
+						}
+					}
+				}
+			}
+		}
+
+		return $includes;
+	}
+
+	/**
+	 * Write a `<img>` element
+	 *
+	 * @param   string   $file      The relative or absolute URL to use for the src attribute.
+	 * @param   string   $alt       The alt text.
+	 * @param   mixed    $attribs   String or associative array of attribute(s) to use.
+	 * @param   boolean  $relative  Path to file is relative to /media folder (and searches in template).
+	 * @param   mixed    $path_rel  Return html tag without (-1) or with file computing(false). Return computed path only (true).
+	 *
+	 * @return  string
+	 *
+	 * @since   1.5
+	 */
+	public static function image($file, $alt, $attribs = null, $relative = false, $path_rel = false)
+	{
+		if ($path_rel !== -1)
+		{
+			$includes = static::includeRelativeFiles('images', $file, $relative, false, false);
+			$file = count($includes) ? $includes[0] : null;
+		}
+
+		// If only path is required
+		if ($path_rel)
+		{
+			return $file;
+		}
+		else
+		{
+			return '<img src="' . $file . '" alt="' . $alt . '" '
+			. trim((is_array($attribs) ? ArrayHelper::toString($attribs) : $attribs) . ' /')
+			. '>';
+		}
+	}
+
+	/**
+	 * Write a `<link>` element to load a CSS file
+	 *
+	 * @param   string   $file            path to file
+	 * @param   array    $attribs         attributes to be added to the stylesheet
+	 * @param   boolean  $relative        path to file is relative to /media folder
+	 * @param   boolean  $path_only       return the path to the file only
+	 * @param   boolean  $detect_browser  detect browser to include specific browser css files
+	 *                                    will try to include file, `file_*browser*`, `file_*browser*_*major*`, `file_*browser*_*major*_*minor*`
+	 *                                    <table>
+	 *                                       <tr><th>Navigator</th>                  <th>browser</th>	<th>major.minor</th></tr>
+	 *
+	 *                                       <tr><td>Safari 3.0.x</td>               <td>konqueror</td>	<td>522.x</td></tr>
+	 *                                       <tr><td>Safari 3.1.x and 3.2.x</td>     <td>konqueror</td>	<td>525.x</td></tr>
+	 *                                       <tr><td>Safari 4.0 to 4.0.2</td>        <td>konqueror</td>	<td>530.x</td></tr>
+	 *                                       <tr><td>Safari 4.0.3 to 4.0.4</td>      <td>konqueror</td>	<td>531.x</td></tr>
+	 *                                       <tr><td>iOS 4.0 Safari</td>             <td>konqueror</td>	<td>532.x</td></tr>
+	 *                                       <tr><td>Safari 5.0</td>                 <td>konqueror</td>	<td>533.x</td></tr>
+	 *
+	 *                                       <tr><td>Google Chrome 1.0</td>          <td>konqueror</td>	<td>528.x</td></tr>
+	 *                                       <tr><td>Google Chrome 2.0</td>          <td>konqueror</td>	<td>530.x</td></tr>
+	 *                                       <tr><td>Google Chrome 3.0 and 4.x</td>  <td>konqueror</td>	<td>532.x</td></tr>
+	 *                                       <tr><td>Google Chrome 5.0</td>          <td>konqueror</td>	<td>533.x</td></tr>
+	 *
+	 *                                       <tr><td>Internet Explorer 5.5</td>      <td>msie</td>		<td>5.5</td></tr>
+	 *                                       <tr><td>Internet Explorer 6.x</td>      <td>msie</td>		<td>6.x</td></tr>
+	 *                                       <tr><td>Internet Explorer 7.x</td>      <td>msie</td>		<td>7.x</td></tr>
+	 *                                       <tr><td>Internet Explorer 8.x</td>      <td>msie</td>		<td>8.x</td></tr>
+	 *
+	 *                                       <tr><td>Firefox</td>                    <td>mozilla</td>	<td>5.0</td></tr>
+	 *                                    </table>
+	 * @param   boolean  $detect_debug    detect debug to search for compressed files if debug is on
+	 *
+	 * @return  mixed  nothing if $path_only is false, null, path or array of path if specific css browser files were detected
+	 *
+	 * @see     JBrowser
+	 * @since   1.5
+	 */
+	public static function stylesheet($file, $attribs = array(), $relative = false, $path_only = false, $detect_browser = true, $detect_debug = true)
+	{
+		$includes = static::includeRelativeFiles('css', $file, $relative, $detect_browser, $detect_debug);
+
+		// If only path is required
+		if ($path_only)
+		{
+			if (count($includes) == 0)
+			{
+				return;
+			}
+			elseif (count($includes) == 1)
+			{
+				return $includes[0];
+			}
+			else
+			{
+				return $includes;
+			}
+		}
+		// If inclusion is required
+		else
+		{
+			$document = JFactory::getDocument();
+
+			foreach ($includes as $include)
+			{
+				$document->addStylesheet($include, 'text/css', null, $attribs);
+			}
+		}
+	}
+
+	/**
+	 * Write a `<script>` element to load a JavaScript file
+	 *
+	 * @param   string   $file            path to file.
+	 * @param   boolean  $framework       load the JS framework.
+	 * @param   boolean  $relative        path to file is relative to /media folder.
+	 * @param   boolean  $path_only       return the path to the file only.
+	 * @param   boolean  $detect_browser  detect browser to include specific browser js files.
+	 * @param   boolean  $detect_debug    detect debug to search for compressed files if debug is on.
+	 *
+	 * @return  mixed  nothing if $path_only is false, null, path or array of path if specific js browser files were detected.
+	 *
+	 * @see     JHtml::stylesheet()
+	 * @since   1.5
+	 */
+	public static function script($file, $framework = false, $relative = false, $path_only = false, $detect_browser = true, $detect_debug = true)
+	{
+		// Include MooTools framework
+		if ($framework)
+		{
+			static::_('behavior.framework');
+		}
+
+		$includes = static::includeRelativeFiles('js', $file, $relative, $detect_browser, $detect_debug);
+
+		// If only path is required
+		if ($path_only)
+		{
+			if (count($includes) == 0)
+			{
+				return;
+			}
+			elseif (count($includes) == 1)
+			{
+				return $includes[0];
+			}
+			else
+			{
+				return $includes;
+			}
+		}
+		// If inclusion is required
+		else
+		{
+			$document = JFactory::getDocument();
+
+			foreach ($includes as $include)
+			{
+				$document->addScript($include);
+			}
+		}
+	}
+
+	/**
+	 * Set format related options.
+	 *
+	 * Updates the formatOptions array with all valid values in the passed array.
+	 *
+	 * @param   array  $options  Option key/value pairs.
+	 *
+	 * @return  void
+	 *
+	 * @see     JHtml::$formatOptions
+	 * @since   1.5
+	 */
+	public static function setFormatOptions($options)
+	{
+		foreach ($options as $key => $val)
+		{
+			if (isset(static::$formatOptions[$key]))
+			{
+				static::$formatOptions[$key] = $val;
+			}
+		}
+	}
+
+	/**
+	 * Returns formated date according to a given format and time zone.
+	 *
+	 * @param   string   $input      String in a format accepted by date(), defaults to "now".
+	 * @param   string   $format     The date format specification string (see {@link PHP_MANUAL#date}).
+	 * @param   mixed    $tz         Time zone to be used for the date.  Special cases: boolean true for user
+	 *                               setting, boolean false for server setting.
+	 * @param   boolean  $gregorian  True to use Gregorian calendar.
+	 *
+	 * @return  string    A date translated by the given format and time zone.
+	 *
+	 * @see     strftime
+	 * @since   1.5
+	 */
+	public static function date($input = 'now', $format = null, $tz = true, $gregorian = false)
+	{
+		// Get some system objects.
+		$config = JFactory::getConfig();
+		$user = JFactory::getUser();
+
+		// UTC date converted to user time zone.
+		if ($tz === true)
+		{
+			// Get a date object based on UTC.
+			$date = JFactory::getDate($input, 'UTC');
+
+			// Set the correct time zone based on the user configuration.
+			$date->setTimeZone(new DateTimeZone($user->getParam('timezone', $config->get('offset'))));
+		}
+		// UTC date converted to server time zone.
+		elseif ($tz === false)
+		{
+			// Get a date object based on UTC.
+			$date = JFactory::getDate($input, 'UTC');
+
+			// Set the correct time zone based on the server configuration.
+			$date->setTimeZone(new DateTimeZone($config->get('offset')));
+		}
+		// No date conversion.
+		elseif ($tz === null)
+		{
+			$date = JFactory::getDate($input);
+		}
+		// UTC date converted to given time zone.
+		else
+		{
+			// Get a date object based on UTC.
+			$date = JFactory::getDate($input, 'UTC');
+
+			// Set the correct time zone based on the server configuration.
+			$date->setTimeZone(new DateTimeZone($tz));
+		}
+
+		// If no format is given use the default locale based format.
+		if (!$format)
+		{
+			$format = JText::_('DATE_FORMAT_LC1');
+		}
+		// $format is an existing language key
+		elseif (JFactory::getLanguage()->hasKey($format))
+		{
+			$format = JText::_($format);
+		}
+
+		if ($gregorian)
+		{
+			return $date->format($format, true);
+		}
+		else
+		{
+			return $date->calendar($format, true);
+		}
+	}
+
+	/**
+	 * Creates a tooltip with an image as button
+	 *
+	 * @param   string  $tooltip  The tip string.
+	 * @param   mixed   $title    The title of the tooltip or an associative array with keys contained in
+	 *                            {'title','image','text','href','alt'} and values corresponding to parameters of the same name.
+	 * @param   string  $image    The image for the tip, if no text is provided.
+	 * @param   string  $text     The text for the tip.
+	 * @param   string  $href     A URL that will be used to create the link.
+	 * @param   string  $alt      The alt attribute for img tag.
+	 * @param   string  $class    CSS class for the tool tip.
+	 *
+	 * @return  string
+	 *
+	 * @since   1.5
+	 */
+	public static function tooltip($tooltip, $title = '', $image = 'tooltip.png', $text = '', $href = '', $alt = 'Tooltip', $class = 'hasTooltip')
+	{
+		if (is_array($title))
+		{
+			foreach (array('image', 'text', 'href', 'alt', 'class') as $param)
+			{
+				if (isset($title[$param]))
+				{
+					$$param = $title[$param];
+				}
+			}
+
+			if (isset($title['title']))
+			{
+				$title = $title['title'];
+			}
+			else
+			{
+				$title = '';
+			}
+		}
+
+		if (!$text)
+		{
+			$alt = htmlspecialchars($alt, ENT_COMPAT, 'UTF-8');
+			$text = static::image($image, $alt, null, true);
+		}
+
+		if ($href)
+		{
+			$tip = '<a href="' . $href . '">' . $text . '</a>';
+		}
+		else
+		{
+			$tip = $text;
+		}
+
+		if ($class == 'hasTip')
+		{
+			// Still using MooTools tooltips!
+			$tooltip = htmlspecialchars($tooltip, ENT_COMPAT, 'UTF-8');
+
+			if ($title)
+			{
+				$title = htmlspecialchars($title, ENT_COMPAT, 'UTF-8');
+				$tooltip = $title . '::' . $tooltip;
+			}
+		}
+		else
+		{
+			$tooltip = self::tooltipText($title, $tooltip, 0);
+		}
+
+		return '<span class="' . $class . '" title="' . $tooltip . '">' . $tip . '</span>';
+	}
+
+	/**
+	 * Converts a double colon separated string or 2 separate strings to a string ready for bootstrap tooltips
+	 *
+	 * @param   string  $title      The title of the tooltip (or combined '::' separated string).
+	 * @param   string  $content    The content to tooltip.
+	 * @param   int     $translate  If true will pass texts through JText.
+	 * @param   int     $escape     If true will pass texts through htmlspecialchars.
+	 *
+	 * @return  string  The tooltip string
+	 *
+	 * @since   3.1.2
+	 */
+	public static function tooltipText($title = '', $content = '', $translate = 1, $escape = 1)
+	{
+		// Initialise return value.
+		$result = '';
+
+		// Don't process empty strings
+		if ($content != '' || $title != '')
+		{
+			// Split title into title and content if the title contains '::' (old Mootools format).
+			if ($content == '' && !(strpos($title, '::') === false))
+			{
+				list($title, $content) = explode('::', $title, 2);
+			}
+
+			// Pass texts through JText if required.
+			if ($translate)
+			{
+				$title = JText::_($title);
+				$content = JText::_($content);
+			}
+
+			// Use only the content if no title is given.
+			if ($title == '')
+			{
+				$result = $content;
+			}
+			// Use only the title, if title and text are the same.
+			elseif ($title == $content)
+			{
+				$result = '<strong>' . $title . '</strong>';
+			}
+			// Use a formatted string combining the title and content.
+			elseif ($content != '')
+			{
+				$result = '<strong>' . $title . '</strong><br />' . $content;
+			}
+			else
+			{
+				$result = $title;
+			}
+
+			// Escape everything, if required.
+			if ($escape)
+			{
+				$result = htmlspecialchars($result);
+			}
+		}
+
+		return $result;
+	}
+
+	/**
+	 * Displays a calendar control field
+	 *
+	 * @param   string  $value    The date value
+	 * @param   string  $name     The name of the text field
+	 * @param   string  $id       The id of the text field
+	 * @param   string  $format   The date format
+	 * @param   mixed   $attribs  Additional HTML attributes
+	 *
+	 * @return  string  HTML markup for a calendar field
+	 *
+	 * @since   1.5
+	 */
+	public static function calendar($value, $name, $id, $format = '%Y-%m-%d', $attribs = null)
+	{
+		static $done;
+
+		if ($done === null)
+		{
+			$done = array();
+		}
+
+		$readonly = isset($attribs['readonly']) && $attribs['readonly'] == 'readonly';
+		$disabled = isset($attribs['disabled']) && $attribs['disabled'] == 'disabled';
+
+		if (is_array($attribs))
+		{
+			$attribs['class'] = isset($attribs['class']) ? $attribs['class'] : 'input-medium';
+			$attribs['class'] = trim($attribs['class'] . ' hasTooltip');
+
+			$attribs = ArrayHelper::toString($attribs);
+		}
+
+		static::_('bootstrap.tooltip');
+
+		// Format value when not nulldate ('0000-00-00 00:00:00'), otherwise blank it as it would result in 1970-01-01.
+		if ($value && $value != JFactory::getDbo()->getNullDate() && strtotime($value) !== false)
+		{
+			$tz = date_default_timezone_get();
+			date_default_timezone_set('UTC');
+			$inputvalue = strftime($format, strtotime($value));
+			date_default_timezone_set($tz);
+		}
+		else
+		{
+			$inputvalue = '';
+		}
+
+		// Load the calendar behavior
+		static::_('behavior.calendar');
+
+		// Only display the triggers once for each control.
+		if (!in_array($id, $done))
+		{
+			$document = JFactory::getDocument();
+			$document
+				->addScriptDeclaration(
+				'jQuery(document).ready(function($) {Calendar.setup({
+			// Id of the input field
+			inputField: "' . $id . '",
+			// Format of the input field
+			ifFormat: "' . $format . '",
+			// Trigger for the calendar (button ID)
+			button: "' . $id . '_img",
+			// Alignment (defaults to "Bl")
+			align: "Tl",
+			singleClick: true,
+			firstDay: ' . JFactory::getLanguage()->getFirstDay() . '
+			});});'
+			);
+			$done[] = $id;
+		}
+
+		// Hide button using inline styles for readonly/disabled fields
+		$btn_style = ($readonly || $disabled) ? ' style="display:none;"' : '';
+		$div_class = (!$readonly && !$disabled) ? ' class="input-append"' : '';
+
+		return '<div' . $div_class . '>'
+				. '<input type="text" title="' . ($inputvalue ? static::_('date', $value, null, null) : '')
+				. '" name="' . $name . '" id="' . $id . '" value="' . htmlspecialchars($inputvalue, ENT_COMPAT, 'UTF-8') . '" ' . $attribs . ' />'
+				. '<button type="button" class="btn" id="' . $id . '_img"' . $btn_style . '><span class="icon-calendar"></span></button>'
+			. '</div>';
+	}
+
+	/**
+	 * Add a directory where JHtml should search for helpers. You may
+	 * either pass a string or an array of directories.
+	 *
+	 * @param   string  $path  A path to search.
+	 *
+	 * @return  array  An array with directory elements
+	 *
+	 * @since   1.5
+	 */
+	public static function addIncludePath($path = '')
+	{
+		// Force path to array
+		settype($path, 'array');
+
+		// Loop through the path directories
+		foreach ($path as $dir)
+		{
+			if (!empty($dir) && !in_array($dir, static::$includePaths))
+			{
+				array_unshift(static::$includePaths, JPath::clean($dir));
+			}
+		}
+
+		return static::$includePaths;
+	}
+
+	/**
+	 * Internal method to get a JavaScript object notation string from an array
+	 *
+	 * @param   array  $array  The array to convert to JavaScript object notation
+	 *
+	 * @return  string  JavaScript object notation representation of the array
+	 *
+	 * @deprecated 4.0 use json_encode or JRegistry::toString('json')
+	 *
+	 * @since   3.0
+	 */
+	public static function getJSObject(array $array = array())
+	{
+		JLog::add(__METHOD__ . ' is deprecated. Use json_encode instead.', JLog::WARNING, 'deprecated');
+
+		$elements = array();
+
+		foreach ($array as $k => $v)
+		{
+			// Don't encode either of these types
+			if (is_null($v) || is_resource($v))
+			{
+				continue;
+			}
+
+			// Safely encode as a Javascript string
+			$key = json_encode((string) $k);
+
+			if (is_bool($v))
+			{
+				$elements[] = $key . ': ' . ($v ? 'true' : 'false');
+			}
+			elseif (is_numeric($v))
+			{
+				$elements[] = $key . ': ' . ($v + 0);
+			}
+			elseif (is_string($v))
+			{
+				if (strpos($v, '\\') === 0)
+				{
+					// Items such as functions and JSON objects are prefixed with \, strip the prefix and don't encode them
+					$elements[] = $key . ': ' . substr($v, 1);
+				}
+				else
+				{
+					// The safest way to insert a string
+					$elements[] = $key . ': ' . json_encode((string) $v);
+				}
+			}
+			else
+			{
+				$elements[] = $key . ': ' . static::getJSObject(is_object($v) ? get_object_vars($v) : $v);
+			}
+		}
+
+		return '{' . implode(',', $elements) . '}';
 	}
 }
