@@ -93,7 +93,7 @@ class UsersHelperRoute
 
 		foreach ($items as $item)
 		{
-			if (isset($item->query['view']) && $item->query['view'] === 'profile')
+			if (isset($item->query['view']) && $item->query['view'] === 'profile' && empty($item->query['layout']))
 			{
 				$itemid = $item->id;
 				break;
