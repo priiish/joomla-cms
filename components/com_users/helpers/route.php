@@ -96,7 +96,12 @@ class UsersHelperRoute
 			if (isset($item->query['view']) && $item->query['view'] === 'profile')
 			{
 				$itemid = $item->id;
-				break;
+
+				// If do not find a default profile view (e.g. edit view), we continue searching
+				if (empty($item->query['layout']))
+				{
+					break;
+				}
 			}
 		}
 
