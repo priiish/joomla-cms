@@ -1025,17 +1025,18 @@ abstract class AdminModel extends FormModel
                 $context = $this->option . '.' . $this->name;
 
                 // Trigger the before delete event so it checks if category is empty.
-                $resultCategory = \JFactory::getApplication()->triggerEvent($this->event_before_delete, array($context, $table));
+                $resultItem = \JFactory::getApplication()->triggerEvent($this->event_before_delete, array($context, $table));
 
                 // If the previously checked category has items associated with it, it cannot be moved to trash.
-                if (in_array(false, $resultCategory, true))
+
+                    if (in_array(false, $resultItem, true) && $value == -2)
                 {
-                    // Prune items that you can't change.
-                    unset($pks[$i]);
-                    return false;
+                        // Prune items that you can't change.
+                        unset($pks[$i]);
+                        return false;
+                    }
                 }
             }
-        }
 
 
         // Attempt to change the state of the records.
