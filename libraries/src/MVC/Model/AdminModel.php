@@ -958,6 +958,7 @@ abstract class AdminModel extends FormModel
 		// Load the parameters.
 		$value = \JComponentHelper::getParams($this->option);
 		$this->setState('params', $value);
+
 	}
 
 	/**
@@ -996,7 +997,7 @@ abstract class AdminModel extends FormModel
 		// Access checks.
 		foreach ($pks as $i => $pk)
 		{
-			$table->reset();
+            $table->reset();
 
             if ($table->load($pk))
             {
@@ -1012,8 +1013,7 @@ abstract class AdminModel extends FormModel
                 }
 
                 // If the table is checked out by another user, drop it and report to the user trying to change its state.
-                if (property_exists($table, 'checked_out') && $table->checked_out && ($table->checked_out != $user->id))
-                {
+                if (property_exists($table, 'checked_out') && $table->checked_out && ($table->checked_out != $user->id)) {
                     \JLog::add(\JText::_('JLIB_APPLICATION_ERROR_CHECKIN_USER_MISMATCH'), \JLog::WARNING, 'jerror');
 
                     // Prune items that you can't change.
@@ -1022,21 +1022,28 @@ abstract class AdminModel extends FormModel
                     return false;
                 }
 
-                $context = $this->option . '.' . $this->name;
+                // Get the task - if it is "trash" then trigger event_before_delete
+                $task = \JFactory::getApplication()->input->getCmd('task');
 
-                // Trigger the before delete event so it checks if category is empty.
-                $resultItem = \JFactory::getApplication()->triggerEvent($this->event_before_delete, array($context, $table));
-
-                // If the previously checked category has items associated with it, it cannot be moved to trash.
-
-                    if (in_array(false, $resultItem, true) && $value == -2)
+                if ($task === 'trash')
                 {
+                    $context = $this->option . '.' . $this->name;
+
+                    // Trigger the before delete event so it checks if category is empty.
+                    $resultItem = \JFactory::getApplication()->triggerEvent($this->event_before_delete, array($context, $table));
+
+                    // If the previously checked category has items associated with it, it cannot be moved to trash.
+                    if (in_array(false, $resultItem, true))
+                    {
                         // Prune items that you can't change.
                         unset($pks[$i]);
                         return false;
+
                     }
+
                 }
             }
+		}
 
 
         // Attempt to change the state of the records.
