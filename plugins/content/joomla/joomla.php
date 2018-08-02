@@ -240,8 +240,11 @@ class PlgContentJoomla extends CMSPlugin
 		// Now check to see if this is a known core extension
 		if (isset($tableInfo[$extension]))
 		{
-			// See if this category has any content items
-			$count = $this->_countItemsFromState($extension, $pk, $tableInfo[$extension]);
+            // Get table name for known core extensions
+            $table = $tableInfo[$extension]['table_name'];
+
+            // See if this category has any content items
+            $count = $this->_countItemsFromState($extension, $pk, $table);
 
 			// Return false if db error
 			if ($count === false)
@@ -366,6 +369,7 @@ class PlgContentJoomla extends CMSPlugin
 	 *
 	 * @since  __DEPLOY_VERSION__
 	 */
+
 	private function _countItemsFromState($extension, $state_id, $table)
 	{
 		$query = $this->db->getQuery(true);

@@ -62,6 +62,7 @@ abstract class AdminModel extends FormModel
 	 * @var    string
 	 * @since  1.6
 	 */
+
 	protected $event_before_save = null;
 
 	/**
@@ -191,7 +192,7 @@ abstract class AdminModel extends FormModel
 			$this->event_before_delete = 'onContentBeforeDelete';
 		}
 
-		if (isset($config['event_before_save']))
+        if (isset($config['event_before_save']))
 		{
 			$this->event_before_save = $config['event_before_save'];
 		}
@@ -997,32 +998,47 @@ abstract class AdminModel extends FormModel
 		{
 			$table->reset();
 
-			if ($table->load($pk))
-			{
-				if (!$this->canEditState($table))
-				{
-					// Prune items that you can't change.
-					unset($pks[$i]);
+            if ($table->load($pk))
+            {
 
-					\JLog::add(\JText::_('JLIB_APPLICATION_ERROR_EDITSTATE_NOT_PERMITTED'), \JLog::WARNING, 'jerror');
+                if (!$this->canEditState($table))
+                {
+                    // Prune items that you can't change.
+                    unset($pks[$i]);
 
-					return false;
-				}
+                    \JLog::add(\JText::_('JLIB_APPLICATION_ERROR_EDITSTATE_NOT_PERMITTED'), \JLog::WARNING, 'jerror');
 
-				// If the table is checked out by another user, drop it and report to the user trying to change its state.
-				if (property_exists($table, 'checked_out') && $table->checked_out && ($table->checked_out != $user->id))
-				{
-					\JLog::add(\JText::_('JLIB_APPLICATION_ERROR_CHECKIN_USER_MISMATCH'), \JLog::WARNING, 'jerror');
+                    return false;
+                }
 
-					// Prune items that you can't change.
-					unset($pks[$i]);
+                // If the table is checked out by another user, drop it and report to the user trying to change its state.
+                if (property_exists($table, 'checked_out') && $table->checked_out && ($table->checked_out != $user->id))
+                {
+                    \JLog::add(\JText::_('JLIB_APPLICATION_ERROR_CHECKIN_USER_MISMATCH'), \JLog::WARNING, 'jerror');
 
-					return false;
-				}
-			}
-		}
+                    // Prune items that you can't change.
+                    unset($pks[$i]);
 
-		// Attempt to change the state of the records.
+                    return false;
+                }
+
+                $context = $this->option . '.' . $this->name;
+
+                // Trigger the before delete event so it checks if category is empty.
+                $resultCategory = \JFactory::getApplication()->triggerEvent($this->event_before_delete, array($context, $table));
+
+                // If the previously checked category has items associated with it, it cannot be moved to trash.
+                if (in_array(false, $resultCategory, true))
+                {
+                    // Prune items that you can't change.
+                    unset($pks[$i]);
+                    return false;
+                }
+            }
+        }
+
+
+        // Attempt to change the state of the records.
 		if (!$table->publish($pks, $value, $user->get('id')))
 		{
 			$this->setError($table->getError());
